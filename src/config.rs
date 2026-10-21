@@ -40,8 +40,7 @@ impl Config {
 
         let base_url = env::var("BASE_URL")
             .ok()
-            .map(|value| value.trim().trim_end_matches('/').to_owned())
-            .filter(|value| !value.is_empty());
+            .and_then(|value| normalize_base_url(&value));
 
         Ok(Self {
             channels,
@@ -49,6 +48,17 @@ impl Config {
             port,
             base_url,
         })
+    }
+}
+
+fn normalize_base_url(value: &str) -> Option<String> {
+    let value = value.trim().trim_end_matches('/');
+    if value.is_empty() {
+        None
+    } else if value.starts_with("http://") || value.starts_with("https://") {
+        Some(value.to_owned())
+    } else {
+        Some(format!("https://{value}"))
     }
 }
 

@@ -10,6 +10,11 @@ pub fn spawn(base_url: Option<String>) {
     };
 
     let health_url = format!("{base_url}/api/health");
+    if let Err(error) = reqwest::Url::parse(&health_url) {
+        tracing::warn!(%health_url, %error, "invalid BASE_URL; health pings are disabled");
+        return;
+    }
+
     tracing::info!(%health_url, "ping every {PING_INTERVAL_MINS} minutes");
 
     tokio::spawn(async move {
