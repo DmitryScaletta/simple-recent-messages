@@ -1,5 +1,6 @@
 mod config;
 mod irc;
+mod keep_alive;
 mod store;
 mod web;
 
@@ -67,6 +68,8 @@ async fn run() -> Result<(), AppError> {
             port: config.port,
             source,
         })?;
+
+    keep_alive::spawn(config.base_url);
 
     tracing::info!(
         port = config.port,

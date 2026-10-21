@@ -3,6 +3,7 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     extract::{Query, State},
+    http::StatusCode,
     routing::get,
 };
 use serde::{Deserialize, Serialize};
@@ -22,10 +23,15 @@ struct RecentMessagesResponse {
 
 pub fn router(store: Arc<MessageStore>) -> Router {
     Router::new()
+        .route("/api/health", get(health))
         .route("/api/twitch/recent-messages", get(recent_messages))
         .with_state(store)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
+}
+
+async fn health() -> StatusCode {
+    StatusCode::OK
 }
 
 async fn recent_messages(

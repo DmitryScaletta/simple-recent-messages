@@ -26,6 +26,7 @@ cargo run
 | `CHANNELS` | yes | | Comma or semicolon separated channel logins. Leading `#` is allowed. |
 | `LIMIT` | no | `500` | Maximum messages kept per channel. |
 | `PORT` | no | `2790` | HTTP listen port. |
+| `BASE_URL` | no | | Public base URL, e.g. `https://example.com` |
 | `RUST_LOG` | no | `info` | Tracing filter. |
 
 Configured channels are joined at startup. `twitch-irc` automatically reconnects

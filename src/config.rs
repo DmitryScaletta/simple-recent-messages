@@ -16,6 +16,7 @@ pub struct Config {
     pub channels: Vec<String>,
     pub limit: usize,
     pub port: u16,
+    pub base_url: Option<String>,
 }
 
 impl Config {
@@ -37,10 +38,16 @@ impl Config {
             .and_then(|value| value.parse().ok())
             .unwrap_or(2790);
 
+        let base_url = env::var("BASE_URL")
+            .ok()
+            .map(|value| value.trim().trim_end_matches('/').to_owned())
+            .filter(|value| !value.is_empty());
+
         Ok(Self {
             channels,
             limit,
             port,
+            base_url,
         })
     }
 }
