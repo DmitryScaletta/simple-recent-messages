@@ -61,7 +61,7 @@ async fn run() -> Result<(), AppError> {
 
     irc::spawn(Arc::clone(&store))?;
 
-    let app = web::router(Arc::clone(&store));
+    let app = web::router(Arc::clone(&store), config.redirect_url.clone());
     let listener = TcpListener::bind(("0.0.0.0", config.port))
         .await
         .map_err(|source| AppError::Bind {

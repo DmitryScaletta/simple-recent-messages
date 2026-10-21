@@ -17,6 +17,7 @@ pub struct Config {
     pub limit: usize,
     pub port: u16,
     pub base_url: Option<String>,
+    pub redirect_url: Option<String>,
 }
 
 impl Config {
@@ -42,11 +43,17 @@ impl Config {
             .ok()
             .and_then(|value| normalize_base_url(&value));
 
+        let redirect_url = env::var("REDIRECT_URL")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+
         Ok(Self {
             channels,
             limit,
             port,
             base_url,
+            redirect_url,
         })
     }
 }
