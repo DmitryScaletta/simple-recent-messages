@@ -24,10 +24,7 @@ pub fn spawn(store: Arc<MessageStore>) -> Result<(), IrcError> {
 
     client.set_wanted_channels(store.channels().clone())?;
 
-    tracing::info!(
-        channels = store.channels().len(),
-        "joining configured Twitch channels"
-    );
+    tracing::info!(channels = ?store.channels(), "joining channels");
 
     tokio::spawn(async move {
         // Keep the client handle alive for as long as the receiver runs.
