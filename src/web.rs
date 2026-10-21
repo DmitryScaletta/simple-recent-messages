@@ -70,7 +70,15 @@ async fn get_recent_messages(
     let channel = normalize_channel(channel);
     tracing::info!(%channel, "/recent-messages");
 
-    if channel.is_empty() || state.store.channels().contains(&channel) {
+    let is_channel_char = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let is_valid_channel =
+        !channel.is_empty() && channel.len() <= 32 && channel.chars().all(is_channel_char);
+    if !is_valid_channel {
+        tracing::warn!(%channel, "invalid channel");
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    if state.store.channels().contains(&channel) {
         return Ok(Json(RecentMessagesResponse {
             messages: state.store.recent(&channel).await,
         }));

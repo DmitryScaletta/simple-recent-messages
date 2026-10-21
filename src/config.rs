@@ -48,6 +48,12 @@ impl Config {
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty());
 
+        if let Some(url) = redirect_url.as_deref()
+            && !url.contains("%1")
+        {
+            tracing::warn!(%url, "REDIRECT_URL does not contain %1");
+        }
+
         Ok(Self {
             channels,
             limit,

@@ -1,7 +1,6 @@
 use std::time::Duration;
 
-const PING_INTERVAL_MINS: u64 = 30;
-const PING_INTERVAL: Duration = Duration::from_mins(PING_INTERVAL_MINS);
+const PING_INTERVAL: Duration = Duration::from_mins(30);
 
 pub fn spawn(base_url: Option<String>) {
     let Some(base_url) = base_url else {
@@ -15,7 +14,7 @@ pub fn spawn(base_url: Option<String>) {
         return;
     }
 
-    tracing::info!(%health_url, "ping every {PING_INTERVAL_MINS} minutes");
+    tracing::info!(%health_url, "ping every {PING_INTERVAL:?}");
 
     tokio::spawn(async move {
         let client = reqwest::Client::new();

@@ -40,8 +40,7 @@ GET /api/twitch/recent-messages?channel=xqc
 GET /api/twitch/recent-messages/xqc
 ```
 
-`channel` is matched case-insensitively. Channels that are in `CHANNELS` are
-served from the in-memory buffer.
+`channel` is matched case-insensitively and must be a valid Twitch login. Channels that are in `CHANNELS` are served from the in-memory buffer.
 
 Channels that are not in `CHANNELS` return an empty message list by default.
 When `REDIRECT_URL` is set, their messages are fetched from that URL with `%1`
