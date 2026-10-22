@@ -69,7 +69,8 @@ over HTTP.
 
 - Configured-channel responses include:
   - `Cache-Control: public, max-age=5, stale-while-revalidate=5`.
-  - Weak `ETag` derived from the newest message's `tmi-sent-ts`.
-  - The `ETag` is `"empty"` when there is no newest timestamp.
-- A request whose `If-None-Match` matches returns `304 Not Modified` with the same cache headers.
+  - Weak `ETag` derived from the newest message's `tmi-sent-ts`, formatted as `W/"<timestamp>"`.
+  - The `ETag` is `W/"empty"` when there is no newest timestamp.
+- A request whose `If-None-Match` contains the current timestamp `ETag` returns `304 Not Modified` with the same cache headers.
+- `*` and `W/"empty"` values are not revalidated; requests carrying only those tags receive `200 OK`.
 - Invalid-channel, upstream-failure, and `/api/health` responses use `Cache-Control: no-store`.

@@ -1,18 +1,26 @@
+use std::sync::Arc;
+
 #[derive(Clone)]
 pub struct Message {
     pub(super) timestamp_ms: i64,
-    pub(super) raw: String,
+    pub(super) raw: Arc<str>,
 }
 
 impl Message {
     pub(crate) fn parse(raw: String) -> Option<Self> {
         let timestamp_ms = timestamp_ms(&raw)?;
 
-        Some(Self { timestamp_ms, raw })
+        Some(Self {
+            timestamp_ms,
+            raw: raw.into(),
+        })
     }
 
     pub(crate) fn from_parts(timestamp_ms: i64, raw: String) -> Self {
-        Self { timestamp_ms, raw }
+        Self {
+            timestamp_ms,
+            raw: raw.into(),
+        }
     }
 }
 

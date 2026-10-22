@@ -9,21 +9,27 @@ use axum::{
 const RECENT_MESSAGES_CACHE_CONTROL: &str = "public, max-age=5, stale-while-revalidate=5";
 const NO_STORE: &str = "no-store";
 
-pub(super) fn etag(last_timestamp_ms: Option<i64>) -> String {
+pub(super) fn create_etag(last_timestamp_ms: Option<i64>) -> String {
     match last_timestamp_ms {
-        Some(timestamp_ms) => format!("W/\"ts-{timestamp_ms}\""),
+        Some(timestamp_ms) => format!("W/\"{timestamp_ms}\""),
         None => String::from("W/\"empty\""),
     }
 }
 
-pub(super) fn matches(headers: &HeaderMap, etag: &str) -> bool {
+pub(super) fn parse_etag_timestamp(headers: &HeaderMap) -> Option<i64> {
     headers
         .get_all(IF_NONE_MATCH)
         .iter()
         .filter_map(|value| value.to_str().ok())
         .flat_map(|value| value.split(','))
-        .map(str::trim)
-        .any(|candidate| candidate == "*" || opaque_tag(candidate) == opaque_tag(etag))
+        .filter_map(|tag| {
+            let tag = tag.trim();
+            let tag = tag.strip_prefix("W/").unwrap_or(tag);
+            tag.strip_prefix('"')
+                .and_then(|rest| rest.strip_suffix('"'))
+                .and_then(|timestamp| timestamp.parse().ok())
+        })
+        .max()
 }
 
 pub(super) fn headers(etag: &str) -> [(HeaderName, &str); 2] {
@@ -36,10 +42,6 @@ pub(super) fn not_modified(etag: &str) -> Response {
 
 pub(super) fn no_store(status: StatusCode) -> Response {
     (status, [(CACHE_CONTROL, NO_STORE)]).into_response()
-}
-
-fn opaque_tag(tag: &str) -> &str {
-    tag.strip_prefix("W/").unwrap_or(tag)
 }
 
 #[cfg(test)]
@@ -56,33 +58,37 @@ mod tests {
 
     #[test]
     fn etag_uses_last_message_timestamp() {
-        assert_eq!(etag(None), "W/\"empty\"");
-        assert_eq!(etag(Some(100)), "W/\"ts-100\"");
-        assert_ne!(etag(Some(100)), etag(Some(200)));
+        assert_eq!(create_etag(None), "W/\"empty\"");
+        assert_eq!(create_etag(Some(100)), "W/\"100\"");
+        assert_ne!(create_etag(Some(100)), create_etag(Some(200)));
     }
 
     #[test]
-    fn if_none_match_matches_weak_tags_and_wildcards() {
-        let tag = etag(Some(100));
-        let strong = tag.strip_prefix("W/").expect("weak ETag");
+    fn parses_largest_timestamp_from_if_none_match() {
+        let mut request_headers = HeaderMap::new();
+        request_headers.insert(IF_NONE_MATCH, header_value("W/\"100\", \"200\""));
 
-        for candidate in ["*", tag.as_str(), strong] {
+        assert_eq!(parse_etag_timestamp(&request_headers), Some(200));
+
+        request_headers.insert(IF_NONE_MATCH, header_value("W/\"100\""));
+
+        assert_eq!(parse_etag_timestamp(&request_headers), Some(100));
+
+        request_headers.insert(IF_NONE_MATCH, header_value("\"100\""));
+
+        assert_eq!(parse_etag_timestamp(&request_headers), Some(100));
+    }
+
+    #[test]
+    fn ignores_wildcard_empty_and_unknown_tags() {
+        for candidate in ["*", "W/\"empty\"", "W/\"other\"", "W/\"ts-100\""] {
             let mut request_headers = HeaderMap::new();
             request_headers.insert(IF_NONE_MATCH, header_value(candidate));
 
-            assert!(matches(&request_headers, &tag));
+            assert_eq!(parse_etag_timestamp(&request_headers), None);
         }
 
-        let mut request_headers = HeaderMap::new();
-        request_headers.insert(IF_NONE_MATCH, header_value("W/\"other\""));
-
-        assert!(!matches(&request_headers, &tag));
-        assert!(!matches(&request_headers, &etag(None)));
-
-        let mut wildcard_headers = HeaderMap::new();
-        wildcard_headers.insert(IF_NONE_MATCH, header_value("*"));
-
-        assert!(matches(&wildcard_headers, &etag(None)));
+        assert_eq!(parse_etag_timestamp(&HeaderMap::new()), None);
     }
 
     #[test]
@@ -108,7 +114,7 @@ mod tests {
 
     #[test]
     fn not_modified_with_empty_channel_etag_keeps_cache_headers() {
-        let tag = etag(None);
+        let tag = create_etag(None);
         let response = not_modified(&tag);
 
         assert_eq!(response.status(), StatusCode::NOT_MODIFIED);

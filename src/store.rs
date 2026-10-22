@@ -29,9 +29,6 @@ impl MessageStore {
     }
 
     pub async fn push(&self, channel: &str, message: Message) {
-        if !self.memory.has_channel(channel) {
-            return;
-        }
         let added = self.memory.push(channel, message.clone()).await;
         if added && let Some(redis) = &self.redis {
             redis.queue_message(channel, message).await;
@@ -58,12 +55,12 @@ impl MessageStore {
         }
     }
 
-    pub async fn last_timestamp(&self, channel: &str) -> Option<i64> {
-        self.memory.last_timestamp(channel).await
-    }
-
-    pub async fn recent_messages(&self, channel: &str) -> (Vec<String>, Option<i64>) {
-        self.memory.recent_messages(channel).await
+    pub async fn recent_messages(
+        &self,
+        channel: &str,
+        client_last_timestamp: Option<i64>,
+    ) -> (Option<Vec<String>>, Option<i64>) {
+        self.memory.recent_messages(channel, client_last_timestamp).await
     }
 
     pub async fn flush(&self) {
@@ -95,11 +92,10 @@ mod tests {
         store.push("channel", message(200, RAW_2)).await;
         store.push("channel", message(300, RAW_3)).await;
 
-        let (messages, last_timestamp_ms) = store.recent_messages("channel").await;
+        let (messages, last_timestamp_ms) = store.recent_messages("channel", None).await;
 
-        assert_eq!(messages, vec![RAW_2.to_owned(), RAW_3.to_owned()]);
+        assert_eq!(messages, Some(vec![RAW_2.to_owned(), RAW_3.to_owned()]));
         assert_eq!(last_timestamp_ms, Some(300));
-        assert_eq!(store.last_timestamp("channel").await, Some(300));
     }
 
     #[tokio::test]
@@ -118,9 +114,22 @@ mod tests {
             )]))
             .await;
 
-        let (messages, last_timestamp_ms) = store.recent_messages("channel").await;
+        let (messages, last_timestamp_ms) = store.recent_messages("channel", None).await;
 
-        assert_eq!(messages, vec![RAW_2.to_owned(), RAW_3.to_owned()]);
+        assert_eq!(messages, Some(vec![RAW_2.to_owned(), RAW_3.to_owned()]));
         assert_eq!(last_timestamp_ms, Some(300));
+    }
+
+    #[tokio::test]
+    async fn matching_timestamp_returns_no_messages() {
+        let store = MessageStore::connect(None, vec!["channel".to_owned()], 2);
+
+        store.push("channel", message(100, RAW_1)).await;
+        store.push("channel", message(200, RAW_2)).await;
+
+        let (messages, last_timestamp_ms) = store.recent_messages("channel", Some(200)).await;
+
+        assert!(messages.is_none());
+        assert_eq!(last_timestamp_ms, Some(200));
     }
 }

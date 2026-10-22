@@ -21,7 +21,7 @@ impl ChannelBuffer {
 pub(super) struct MemoryStore {
     channels: HashSet<String>,
     limit: usize,
-    buffers: RwLock<HashMap<String, ChannelBuffer>>,
+    buffers: HashMap<String, RwLock<ChannelBuffer>>,
 }
 
 impl MemoryStore {
@@ -29,13 +29,13 @@ impl MemoryStore {
         let channels: HashSet<String> = channels.into_iter().collect();
         let buffers = channels
             .iter()
-            .map(|channel| (channel.clone(), ChannelBuffer::new(limit)))
+            .map(|channel| (channel.clone(), RwLock::new(ChannelBuffer::new(limit))))
             .collect();
 
         Self {
             channels,
             limit,
-            buffers: RwLock::new(buffers),
+            buffers,
         }
     }
 
@@ -43,14 +43,11 @@ impl MemoryStore {
         &self.channels
     }
 
-    pub(super) fn has_channel(&self, channel: &str) -> bool {
-        self.channels.contains(channel)
-    }
-
     pub(super) async fn push(&self, channel: &str, message: Message) -> bool {
-        let mut buffers = self.buffers.write().await;
-        #[expect(clippy::unwrap_used, reason = "buffers are pre-seeded")]
-        let buffer = buffers.get_mut(channel).unwrap();
+        let Some(buffer) = self.buffers.get(channel) else {
+            return false;
+        };
+        let mut buffer = buffer.write().await;
 
         if !buffer.timestamps.insert(message.timestamp_ms) {
             return false;
@@ -71,9 +68,10 @@ impl MemoryStore {
         channel: &str,
         messages: impl IntoIterator<Item = Message>,
     ) -> Vec<Message> {
-        let mut buffers = self.buffers.write().await;
-        #[expect(clippy::unwrap_used, reason = "buffers are pre-seeded")]
-        let buffer = buffers.get_mut(channel).unwrap();
+        let Some(buffer) = self.buffers.get(channel) else {
+            return Vec::new();
+        };
+        let mut buffer = buffer.write().await;
 
         let mut messages: Vec<_> = messages.into_iter().collect();
         messages.sort_by_key(|message| message.timestamp_ms);
@@ -91,29 +89,28 @@ impl MemoryStore {
         messages
     }
 
-    pub(super) async fn last_timestamp(&self, channel: &str) -> Option<i64> {
-        let buffers = self.buffers.read().await;
-        buffers
-            .get(channel)
-            .and_then(|buffer| buffer.messages.back())
-            .map(|message| message.timestamp_ms)
-    }
+    pub(super) async fn recent_messages(
+        &self,
+        channel: &str,
+        client_last_timestamp: Option<i64>,
+    ) -> (Option<Vec<String>>, Option<i64>) {
+        let Some(buffer) = self.buffers.get(channel) else {
+            return (Some(Vec::new()), None);
+        };
+        let buffer = buffer.read().await;
+        let last_ts = buffer.messages.back().map(|message| message.timestamp_ms);
 
-    pub(super) async fn recent_messages(&self, channel: &str) -> (Vec<String>, Option<i64>) {
-        let buffers = self.buffers.read().await;
-        buffers
-            .get(channel)
-            .map(|buffer| {
-                let last_timestamp_ms = buffer.messages.back().map(|message| message.timestamp_ms);
-                let messages = buffer
-                    .messages
-                    .iter()
-                    .map(|message| message.raw.clone())
-                    .collect();
+        if client_last_timestamp.is_some_and(|client_ts| last_ts == Some(client_ts)) {
+            return (None, last_ts);
+        }
 
-                (messages, last_timestamp_ms)
-            })
-            .unwrap_or_default()
+        let messages = buffer
+            .messages
+            .iter()
+            .map(|message| message.raw.to_string())
+            .collect();
+
+        (Some(messages), last_ts)
     }
 }
 
@@ -137,9 +134,9 @@ mod tests {
         memory.push("channel", message(200, RAW_2)).await;
         memory.push("channel", message(300, RAW_3)).await;
 
-        let (messages, last_timestamp_ms) = memory.recent_messages("channel").await;
+        let (messages, last_timestamp_ms) = memory.recent_messages("channel", None).await;
 
-        assert_eq!(messages, vec![RAW_2.to_owned(), RAW_3.to_owned()]);
+        assert_eq!(messages, Some(vec![RAW_2.to_owned(), RAW_3.to_owned()]));
         assert_eq!(last_timestamp_ms, Some(300));
     }
 
@@ -150,31 +147,46 @@ mod tests {
         memory.push("channel", message(100, RAW_1)).await;
         memory.push("channel", message(100, RAW_2)).await;
 
-        let (messages, last_timestamp_ms) = memory.recent_messages("channel").await;
+        let (messages, last_timestamp_ms) = memory.recent_messages("channel", None).await;
 
-        assert_eq!(messages, vec![RAW_1.to_owned()]);
+        assert_eq!(messages, Some(vec![RAW_1.to_owned()]));
         assert_eq!(last_timestamp_ms, Some(100));
     }
 
     #[tokio::test]
-    async fn empty_channel_has_no_last_timestamp() {
-        let memory = MemoryStore::new(vec!["channel".to_owned()], 2);
-
-        let (messages, last_timestamp_ms) = memory.recent_messages("channel").await;
-
-        assert!(messages.is_empty());
-        assert_eq!(last_timestamp_ms, None);
-        assert_eq!(memory.last_timestamp("channel").await, None);
-    }
-
-    #[tokio::test]
-    async fn last_timestamp_is_newest_message() {
+    async fn matching_timestamp_returns_no_messages() {
         let memory = MemoryStore::new(vec!["channel".to_owned()], 2);
 
         memory.push("channel", message(100, RAW_1)).await;
         memory.push("channel", message(200, RAW_2)).await;
 
-        assert_eq!(memory.last_timestamp("channel").await, Some(200));
+        let (messages, last_timestamp_ms) = memory.recent_messages("channel", Some(200)).await;
+
+        assert!(messages.is_none());
+        assert_eq!(last_timestamp_ms, Some(200));
+    }
+
+    #[tokio::test]
+    async fn older_timestamp_returns_messages() {
+        let memory = MemoryStore::new(vec!["channel".to_owned()], 2);
+
+        memory.push("channel", message(100, RAW_1)).await;
+        memory.push("channel", message(200, RAW_2)).await;
+
+        let (messages, last_timestamp_ms) = memory.recent_messages("channel", Some(100)).await;
+
+        assert_eq!(messages, Some(vec![RAW_1.to_owned(), RAW_2.to_owned()]));
+        assert_eq!(last_timestamp_ms, Some(200));
+    }
+
+    #[tokio::test]
+    async fn empty_channel_returns_empty_messages() {
+        let memory = MemoryStore::new(vec!["channel".to_owned()], 2);
+
+        let (messages, last_timestamp_ms) = memory.recent_messages("channel", None).await;
+
+        assert_eq!(messages, Some(Vec::new()));
+        assert_eq!(last_timestamp_ms, None);
     }
 
     #[tokio::test]
@@ -201,9 +213,9 @@ mod tests {
             vec![200, 300]
         );
 
-        let (messages, last_timestamp_ms) = memory.recent_messages("channel").await;
+        let (messages, last_timestamp_ms) = memory.recent_messages("channel", None).await;
 
-        assert_eq!(messages, vec![RAW_2.to_owned(), RAW_3.to_owned()]);
+        assert_eq!(messages, Some(vec![RAW_2.to_owned(), RAW_3.to_owned()]));
         assert_eq!(last_timestamp_ms, Some(300));
     }
 }

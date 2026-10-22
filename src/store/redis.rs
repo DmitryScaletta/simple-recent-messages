@@ -13,7 +13,7 @@ const KEY_PREFIX: &str = env!("CARGO_PKG_NAME");
 const FLUSH_INTERVAL: Duration = Duration::from_secs(30);
 const TRIM_INTERVAL: Duration = Duration::from_mins(5);
 
-type PendingQueues = HashMap<String, VecDeque<(i64, String)>>;
+type PendingQueues = HashMap<String, VecDeque<Message>>;
 
 pub(super) struct RedisStore {
     client: redis::Client,
@@ -130,7 +130,7 @@ impl RedisStore {
     pub(super) async fn queue_message(&self, channel: &str, message: Message) {
         let mut pending_guard = self.pending.lock().await;
         let queue = pending_guard.entry(channel.to_owned()).or_default();
-        queue.push_back((message.timestamp_ms, message.raw));
+        queue.push_back(message);
         if queue.len() > self.limit {
             queue.pop_front();
         }
@@ -139,7 +139,7 @@ impl RedisStore {
     pub(super) async fn flush(&self) {
         let _flush_guard = self.flush_lock.lock().await;
 
-        let mut pending_queues = self.take_pending_queues().await;
+        let pending_queues = self.take_pending_queues().await;
 
         if pending_queues.is_empty() {
             return;
@@ -151,8 +151,12 @@ impl RedisStore {
         };
 
         let mut pipe = redis::pipe();
-        for (channel, queue) in &mut pending_queues {
-            pipe.zadd_multiple(channel_key(channel), queue.make_contiguous());
+        for (channel, queue) in &pending_queues {
+            let entries: Vec<(i64, &str)> = queue
+                .iter()
+                .map(|message| (message.timestamp_ms, &*message.raw))
+                .collect();
+            pipe.zadd_multiple(channel_key(channel), &entries);
         }
 
         if let Err(error) = pipe.exec_async(&mut conn).await {

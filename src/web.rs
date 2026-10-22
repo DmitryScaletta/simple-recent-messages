@@ -101,13 +101,13 @@ async fn get_recent_messages(state: &AppState, channel: &str, headers: &HeaderMa
         };
     }
 
-    let etag = cache::etag(state.store.last_timestamp(&channel).await);
-    if cache::matches(headers, &etag) {
-        return cache::not_modified(&etag);
-    }
+    let etag_timestamp = cache::parse_etag_timestamp(headers);
+    let (messages, last_timestamp_ms) = state.store.recent_messages(&channel, etag_timestamp).await;
+    let etag = cache::create_etag(last_timestamp_ms);
 
-    let (messages, last_timestamp_ms) = state.store.recent_messages(&channel).await;
-    let etag = cache::etag(last_timestamp_ms);
+    let Some(messages) = messages else {
+        return cache::not_modified(&etag);
+    };
 
     let response = Json(RecentMessagesResponse { messages });
     (cache::headers(&etag), response).into_response()
