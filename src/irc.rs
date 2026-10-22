@@ -45,18 +45,20 @@ pub fn spawn(store: Arc<MessageStore>) -> Result<(), IrcError> {
 }
 
 fn storeable_message(message: &ServerMessage) -> Option<(&str, Message)> {
-    let (channel, message_id) = match message {
-        ServerMessage::Privmsg(message) => {
-            (message.channel_login.as_str(), message.message_id.as_str())
-        }
-        ServerMessage::UserNotice(message) => {
-            (message.channel_login.as_str(), message.message_id.as_str())
-        }
+    let (channel, timestamp_ms) = match message {
+        ServerMessage::Privmsg(message) => (
+            message.channel_login.as_str(),
+            message.server_timestamp.timestamp_millis(),
+        ),
+        ServerMessage::UserNotice(message) => (
+            message.channel_login.as_str(),
+            message.server_timestamp.timestamp_millis(),
+        ),
         _ => return None,
     };
 
     Some((
         channel,
-        Message::from_parts(message_id.to_owned(), message.source().as_raw_irc()),
+        Message::from_parts(timestamp_ms, message.source().as_raw_irc()),
     ))
 }

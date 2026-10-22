@@ -4,6 +4,7 @@ Minimal Twitch chat buffer. It connects anonymously to Twitch IRC, joins the cha
 
 - In-memory by default.
 - Optional Redis persistence with `REDIS_URL`.
+- Redis is retried in the background when unavailable.
 - Startup backfill from `REDIRECT_URL` when set.
 
 See [docs/SPEC.md](docs/SPEC.md) for the main logic.
@@ -46,4 +47,4 @@ GET /api/twitch/recent-messages/xqc
 
 Response: `{"messages": ["<raw IRC line>", ...]}`.
 
-Configured channels are served from memory. Other channels are proxied through `REDIRECT_URL` when it is set, or return an empty list.
+Configured channels are served from memory. Other channels are reverse-proxied through `REDIRECT_URL` when it is set, or return an empty list.

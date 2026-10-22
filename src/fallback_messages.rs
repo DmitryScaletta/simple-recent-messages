@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use reqwest::Response;
+use axum::{body::Body, response::Response};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -43,7 +43,7 @@ pub async fn fetch(
         .timeout(Duration::from_secs(10))
         .send()
         .await
-        .and_then(Response::error_for_status)
+        .and_then(reqwest::Response::error_for_status)
         .map_err(|source| FetchMessagesError::Fetch {
             url: url.clone(),
             source,
@@ -55,4 +55,29 @@ pub async fn fetch(
         .map_err(|source| FetchMessagesError::Decode { url, source })?;
 
     Ok(Some(response.messages))
+}
+
+pub async fn proxy(
+    http: &reqwest::Client,
+    redirect_url: &str,
+    channel: &str,
+) -> Result<Response, reqwest::Error> {
+    let url = redirect_url.replace("%1", channel);
+    tracing::info!(%url);
+
+    let upstream = http
+        .get(url)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await?;
+
+    let status = upstream.status();
+    let headers = upstream.headers().clone();
+    let body = upstream.bytes().await?;
+
+    let mut response = Response::new(Body::from(body));
+    *response.status_mut() = status;
+    *response.headers_mut() = headers;
+
+    Ok(response)
 }

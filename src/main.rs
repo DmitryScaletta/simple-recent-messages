@@ -60,14 +60,21 @@ async fn run() -> Result<(), AppError> {
 
     let config = Config::from_env()?;
     let http = reqwest::Client::new();
-    let store = Arc::new(
-        MessageStore::connect(config.redis_url.as_deref(), config.channels, config.limit).await,
-    );
+    let store = Arc::new(MessageStore::connect(
+        config.redis_url.as_deref(),
+        config.channels,
+        config.limit,
+    ));
 
     if config.redis_url.is_none() {
         tracing::info!("no REDIS_URL; using in-memory storage only");
     }
-    store.init_memory_messages_from_redis().await;
+    startup::run(
+        Arc::clone(&store),
+        config.redirect_url.clone(),
+        http.clone(),
+    )
+    .await;
     irc::spawn(Arc::clone(&store))?;
 
     let app = web::router(
@@ -82,24 +89,17 @@ async fn run() -> Result<(), AppError> {
             source,
         })?;
 
-    tokio::spawn(startup::backfill(
-        Arc::clone(&store),
-        config.redirect_url,
-        http.clone(),
-    ));
-
     keep_alive::spawn(config.base_url, http);
 
-    tracing::info!(
-        port = config.port,
-        limit = config.limit,
-        "HTTP server listening"
-    );
+    tracing::info!(port = config.port, "HTTP server listening");
 
-    axum::serve(listener, app)
+    let serve_result = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
-        .await
-        .map_err(AppError::Serve)?;
+        .await;
+
+    store.flush().await;
+
+    serve_result.map_err(AppError::Serve)?;
 
     Ok(())
 }

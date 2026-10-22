@@ -52,13 +52,15 @@ impl Config {
         let redirect_url = env::var("REDIRECT_URL")
             .ok()
             .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty());
-
-        if let Some(url) = redirect_url.as_deref()
-            && !url.contains("%1")
-        {
-            tracing::warn!(%url, "REDIRECT_URL does not contain %1");
-        }
+            .filter(|value| !value.is_empty())
+            .and_then(|url| {
+                if url.contains("%1") {
+                    Some(url)
+                } else {
+                    tracing::warn!(%url, "REDIRECT_URL does not contain %1; disabling redirect");
+                    None
+                }
+            });
 
         Ok(Self {
             channels,

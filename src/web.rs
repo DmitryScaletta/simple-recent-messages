@@ -1,9 +1,12 @@
+mod cache;
+
 use std::sync::Arc;
 
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     routing::get,
 };
 use serde::{Deserialize, Serialize};
@@ -49,28 +52,27 @@ pub fn router(
         .layer(TraceLayer::new_for_http())
 }
 
-async fn health() -> StatusCode {
-    StatusCode::OK
+async fn health() -> Response {
+    cache::no_store(StatusCode::OK)
 }
 
 async fn recent_messages_by_query(
     State(state): State<AppState>,
     Query(query): Query<RecentMessagesQuery>,
-) -> Result<Json<RecentMessagesResponse>, StatusCode> {
-    get_recent_messages(&state, &query.channel).await
+    headers: HeaderMap,
+) -> Response {
+    get_recent_messages(&state, &query.channel, &headers).await
 }
 
 async fn recent_messages_by_path(
     State(state): State<AppState>,
     Path(channel): Path<String>,
-) -> Result<Json<RecentMessagesResponse>, StatusCode> {
-    get_recent_messages(&state, &channel).await
+    headers: HeaderMap,
+) -> Response {
+    get_recent_messages(&state, &channel, &headers).await
 }
 
-async fn get_recent_messages(
-    state: &AppState,
-    channel: &str,
-) -> Result<Json<RecentMessagesResponse>, StatusCode> {
+async fn get_recent_messages(state: &AppState, channel: &str, headers: &HeaderMap) -> Response {
     let channel = normalize_channel(channel);
     tracing::info!(%channel, "/recent-messages");
 
@@ -79,22 +81,34 @@ async fn get_recent_messages(
         !channel.is_empty() && channel.len() <= 32 && channel.chars().all(is_channel_char);
     if !is_valid_channel {
         tracing::warn!(%channel, "invalid channel");
-        return Err(StatusCode::BAD_REQUEST);
+        return cache::no_store(StatusCode::BAD_REQUEST);
     }
 
-    if state.store.channels().contains(&channel) {
-        return Ok(Json(RecentMessagesResponse {
-            messages: state.store.recent_messages(&channel).await,
-        }));
+    if !state.store.channels().contains(&channel) {
+        let Some(redirect_url) = state.redirect_url.as_deref() else {
+            return Json(RecentMessagesResponse {
+                messages: Vec::new(),
+            })
+            .into_response();
+        };
+
+        return match fallback_messages::proxy(&state.http, redirect_url, &channel).await {
+            Ok(response) => response,
+            Err(error) => {
+                tracing::warn!(%channel, %error, "failed to proxy fallback messages");
+                cache::no_store(StatusCode::BAD_GATEWAY)
+            }
+        };
     }
 
-    let messages = fallback_messages::fetch(&state.http, state.redirect_url.as_deref(), &channel)
-        .await
-        .map_err(|error| {
-            tracing::warn!(%channel, %error, "failed to fetch fallback messages");
-            StatusCode::BAD_GATEWAY
-        })?
-        .unwrap_or_default();
+    let etag = cache::etag(state.store.last_timestamp(&channel).await);
+    if cache::matches(headers, &etag) {
+        return cache::not_modified(&etag);
+    }
 
-    Ok(Json(RecentMessagesResponse { messages }))
+    let (messages, last_timestamp_ms) = state.store.recent_messages(&channel).await;
+    let etag = cache::etag(last_timestamp_ms);
+
+    let response = Json(RecentMessagesResponse { messages });
+    (cache::headers(&etag), response).into_response()
 }
