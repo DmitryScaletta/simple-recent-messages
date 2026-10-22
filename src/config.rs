@@ -14,6 +14,7 @@ pub enum ConfigError {
 #[derive(Debug)]
 pub struct Config {
     pub channels: Vec<String>,
+    pub redis_url: Option<String>,
     pub limit: usize,
     pub port: u16,
     pub base_url: Option<String>,
@@ -27,6 +28,11 @@ impl Config {
         if channels.is_empty() {
             return Err(ConfigError::EmptyChannels);
         }
+
+        let redis_url = env::var("REDIS_URL")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
 
         let limit = env::var("LIMIT")
             .ok()
@@ -56,6 +62,7 @@ impl Config {
 
         Ok(Self {
             channels,
+            redis_url,
             limit,
             port,
             base_url,

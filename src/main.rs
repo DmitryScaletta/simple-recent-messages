@@ -1,6 +1,8 @@
 mod config;
+mod fallback_messages;
 mod irc;
 mod keep_alive;
+mod startup;
 mod store;
 mod web;
 
@@ -57,11 +59,22 @@ async fn run() -> Result<(), AppError> {
         .init();
 
     let config = Config::from_env()?;
-    let store = Arc::new(MessageStore::new(config.channels, config.limit));
+    let http = reqwest::Client::new();
+    let store = Arc::new(
+        MessageStore::connect(config.redis_url.as_deref(), config.channels, config.limit).await,
+    );
 
+    if config.redis_url.is_none() {
+        tracing::info!("no REDIS_URL; using in-memory storage only");
+    }
+    store.init_memory_messages_from_redis().await;
     irc::spawn(Arc::clone(&store))?;
 
-    let app = web::router(Arc::clone(&store), config.redirect_url);
+    let app = web::router(
+        Arc::clone(&store),
+        config.redirect_url.clone(),
+        http.clone(),
+    );
     let listener = TcpListener::bind(("0.0.0.0", config.port))
         .await
         .map_err(|source| AppError::Bind {
@@ -69,7 +82,13 @@ async fn run() -> Result<(), AppError> {
             source,
         })?;
 
-    keep_alive::spawn(config.base_url);
+    tokio::spawn(startup::backfill(
+        Arc::clone(&store),
+        config.redirect_url,
+        http.clone(),
+    ));
+
+    keep_alive::spawn(config.base_url, http);
 
     tracing::info!(
         port = config.port,

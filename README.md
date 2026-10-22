@@ -1,15 +1,19 @@
 # simple-recent-messages
 
-Minimal in-memory Twitch chat buffer. It connects anonymously to Twitch IRC,
-joins the channels listed in `CHANNELS`, and serves the latest raw
-`PRIVMSG` / `USERNOTICE` lines over HTTP.
+Minimal Twitch chat buffer. It connects anonymously to Twitch IRC, joins the channels listed in `CHANNELS`, and serves recent raw `PRIVMSG` / `USERNOTICE` lines over HTTP.
 
-No database is used. Messages are lost when the process restarts.
+- In-memory by default.
+- Optional Redis persistence with `REDIS_URL`.
+- Startup backfill from `REDIRECT_URL` when set.
+
+See [docs/SPEC.md](docs/SPEC.md) for the main logic.
 
 ## Run
 
 ```sh
 CHANNELS=channel1,channel2 cargo run
+# with redis:
+REDIS_URL=redis://127.0.0.1:6379 CHANNELS=channel1,channel2 cargo run
 ```
 
 Or copy `.env.example` to `.env`:
@@ -26,12 +30,12 @@ cargo run
 | `CHANNELS` | yes | | Comma or semicolon separated channel logins. Leading `#` is allowed. |
 | `LIMIT` | no | `500` | Maximum messages kept per channel. |
 | `PORT` | no | `2790` | HTTP listen port. |
-| `BASE_URL` | no | | Public base URL, e.g. `https://example.com` |
+| `BASE_URL` | no | | Public base URL, e.g. `https://example.com`. |
 | `REDIRECT_URL` | no | | Upstream URL template with `%1` replaced by the channel login. |
+| `REDIS_URL` | no | | Redis connection URL. Without it, messages are kept only in memory. |
 | `RUST_LOG` | no | `info` | Tracing filter. |
 
-Configured channels are joined at startup. `twitch-irc` automatically reconnects
-and rejoins them if the connection drops.
+`twitch-irc` automatically reconnects and rejoins configured channels.
 
 ## Endpoints
 
@@ -40,20 +44,6 @@ GET /api/twitch/recent-messages?channel=xqc
 GET /api/twitch/recent-messages/xqc
 ```
 
-`channel` is matched case-insensitively and must be a valid Twitch login. Channels that are in `CHANNELS` are served from the in-memory buffer.
+Response: `{"messages": ["<raw IRC line>", ...]}`.
 
-Channels that are not in `CHANNELS` return an empty message list by default.
-When `REDIRECT_URL` is set, their messages are fetched from that URL with `%1`
-replaced by the channel login.
-
-Example response:
-
-```json
-{
-  "messages": [
-    "@badge-info=;badges=;color=#1E90FF;display-name=User;... PRIVMSG #foo :hello"
-  ]
-}
-```
-
-The raw IRC lines include Twitch tags.
+Configured channels are served from memory. Other channels are proxied through `REDIRECT_URL` when it is set, or return an empty list.

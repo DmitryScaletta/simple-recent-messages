@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use axum::{
     Json, Router,
@@ -9,13 +9,13 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
-use crate::{config::normalize_channel, store::MessageStore};
+use crate::{config::normalize_channel, fallback_messages, store::MessageStore};
 
 #[derive(Clone)]
 struct AppState {
     store: Arc<MessageStore>,
     redirect_url: Option<String>,
-    client: reqwest::Client,
+    http: reqwest::Client,
 }
 
 #[derive(Debug, Deserialize)]
@@ -23,12 +23,16 @@ struct RecentMessagesQuery {
     channel: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Serialize)]
 struct RecentMessagesResponse {
     messages: Vec<String>,
 }
 
-pub fn router(store: Arc<MessageStore>, redirect_url: Option<String>) -> Router {
+pub fn router(
+    store: Arc<MessageStore>,
+    redirect_url: Option<String>,
+    http: reqwest::Client,
+) -> Router {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/twitch/recent-messages", get(recent_messages_by_query))
@@ -39,7 +43,7 @@ pub fn router(store: Arc<MessageStore>, redirect_url: Option<String>) -> Router 
         .with_state(AppState {
             store,
             redirect_url,
-            client: reqwest::Client::new(),
+            http,
         })
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
@@ -80,33 +84,17 @@ async fn get_recent_messages(
 
     if state.store.channels().contains(&channel) {
         return Ok(Json(RecentMessagesResponse {
-            messages: state.store.recent(&channel).await,
+            messages: state.store.recent_messages(&channel).await,
         }));
     }
 
-    let Some(redirect_url) = &state.redirect_url else {
-        return Ok(Json(RecentMessagesResponse {
-            messages: Vec::new(),
-        }));
-    };
-
-    let url = redirect_url.replace("%1", &channel);
-    tracing::info!(%url, "fetching messages from REDIRECT_URL");
-
-    let response = state
-        .client
-        .get(&url)
-        .timeout(Duration::from_secs(10))
-        .send()
+    let messages = fallback_messages::fetch(&state.http, state.redirect_url.as_deref(), &channel)
         .await
-        .and_then(reqwest::Response::error_for_status)
         .map_err(|error| {
-            tracing::warn!(%url, %error, "failed to fetch messages from REDIRECT_URL");
+            tracing::warn!(%channel, %error, "failed to fetch fallback messages");
             StatusCode::BAD_GATEWAY
-        })?;
+        })?
+        .unwrap_or_default();
 
-    response.json().await.map(Json).map_err(|error| {
-        tracing::warn!(%url, %error, "invalid response from REDIRECT_URL");
-        StatusCode::BAD_GATEWAY
-    })
+    Ok(Json(RecentMessagesResponse { messages }))
 }

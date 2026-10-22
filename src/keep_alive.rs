@@ -2,7 +2,7 @@ use std::time::Duration;
 
 const PING_INTERVAL: Duration = Duration::from_mins(30);
 
-pub fn spawn(base_url: Option<String>) {
+pub fn spawn(base_url: Option<String>, http: reqwest::Client) {
     let Some(base_url) = base_url else {
         tracing::warn!("BASE_URL is not set; health pings are disabled");
         return;
@@ -17,12 +17,10 @@ pub fn spawn(base_url: Option<String>) {
     tracing::info!(%health_url, "ping every {PING_INTERVAL:?}");
 
     tokio::spawn(async move {
-        let client = reqwest::Client::new();
-
         loop {
             tokio::time::sleep(PING_INTERVAL).await;
 
-            match client
+            match http
                 .get(&health_url)
                 .timeout(Duration::from_secs(10))
                 .send()

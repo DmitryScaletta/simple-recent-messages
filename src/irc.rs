@@ -7,7 +7,7 @@ use twitch_irc::{
     message::{AsRawIRC, ServerMessage},
 };
 
-use crate::store::MessageStore;
+use crate::store::{Message, MessageStore};
 
 #[derive(Debug, Error)]
 pub enum IrcError {
@@ -16,26 +16,26 @@ pub enum IrcError {
 }
 
 pub fn spawn(store: Arc<MessageStore>) -> Result<(), IrcError> {
-    let (mut incoming_messages, client) =
+    let (mut incoming_messages, irc_client) =
         TwitchIRCClient::<SecureTCPTransport, StaticLoginCredentials>::new(ClientConfig {
             new_connection_every: Duration::from_millis(550),
             ..ClientConfig::default()
         });
 
-    client.set_wanted_channels(store.channels().clone())?;
+    irc_client.set_wanted_channels(store.channels().clone())?;
 
     tracing::info!(channels = ?store.channels(), "joining channels");
 
     tokio::spawn(async move {
         // Keep the client handle alive for as long as the receiver runs.
-        let _client = client;
+        let _irc_client = irc_client;
 
         while let Some(message) = incoming_messages.recv().await {
-            let Some((channel, raw)) = storeable_message(&message) else {
+            let Some((channel, message)) = storeable_message(&message) else {
                 continue;
             };
 
-            store.push(channel, raw).await;
+            store.push(channel, message).await;
         }
 
         tracing::warn!("Twitch IRC message stream ended");
@@ -44,12 +44,19 @@ pub fn spawn(store: Arc<MessageStore>) -> Result<(), IrcError> {
     Ok(())
 }
 
-fn storeable_message(message: &ServerMessage) -> Option<(&str, String)> {
-    let channel = match message {
-        ServerMessage::Privmsg(message) => message.channel_login.as_str(),
-        ServerMessage::UserNotice(message) => message.channel_login.as_str(),
+fn storeable_message(message: &ServerMessage) -> Option<(&str, Message)> {
+    let (channel, message_id) = match message {
+        ServerMessage::Privmsg(message) => {
+            (message.channel_login.as_str(), message.message_id.as_str())
+        }
+        ServerMessage::UserNotice(message) => {
+            (message.channel_login.as_str(), message.message_id.as_str())
+        }
         _ => return None,
     };
 
-    Some((channel, message.source().as_raw_irc()))
+    Some((
+        channel,
+        Message::from_parts(message_id.to_owned(), message.source().as_raw_irc()),
+    ))
 }
