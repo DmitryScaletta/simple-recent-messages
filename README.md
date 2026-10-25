@@ -1,3 +1,8 @@
+<!-- Don't repeat logic in multiple places -->
+<!-- Don't put concrete values that may change -->
+<!-- Don't write a lot of technical details -->
+<!-- Use list items, no long sentences -->
+
 # simple-recent-messages
 
 Minimal Twitch chat buffer. It connects anonymously to Twitch IRC, joins the channels listed in `CHANNELS`, and serves recent raw `PRIVMSG` / `USERNOTICE` lines over HTTP.

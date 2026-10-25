@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-const PING_INTERVAL: Duration = Duration::from_mins(30);
+const PING_INTERVAL: Duration = Duration::from_mins(10);
 
 pub fn spawn(base_url: Option<String>, http: reqwest::Client) {
     let Some(base_url) = base_url else {
